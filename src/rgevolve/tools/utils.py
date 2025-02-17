@@ -3,6 +3,8 @@ import appdirs
 import os
 import h5py
 import numpy as np
+import re
+from functools import lru_cache
 
 def get_data_path(package_name):
     """Return the path to the data file."""
@@ -73,3 +75,27 @@ def load_data(package_name):
     }
     translation = data_h5['Translation']
     return evolution, translation
+
+def normalize(name):
+    return re.sub(r'[^a-zA-Z0-9]+', '-', name).strip('-').lower()
+
+@lru_cache(maxsize=None)
+def get_module(eft, basis):
+    module_name = f"rgevolve.{normalize(eft)}.{normalize(basis)}"
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        raise ImportError(
+            f"The module '{module_name}' is not installed. If available, install it with:\n"
+            f"    pip install {module_name}"
+        )
+
+@lru_cache(maxsize=None)
+def evolution_data(eft, basis):
+    module = get_module(eft, basis)
+    return module.evolution
+
+@lru_cache(maxsize=None)
+def translation_data(eft, basis):
+    module = get_module(eft, basis)
+    return module.translation
