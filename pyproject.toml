@@ -23,3 +23,6 @@ include = ["rgevolve.tools", "rgevolve.matching"]
 
 [tool.setuptools.dynamic]
 version = {attr = "rgevolve.tools.__version__"}
+
+[tool.setuptools.package-data]
+"rgevolve.matching" = ["data.h5"]
