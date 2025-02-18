@@ -13,9 +13,11 @@ requires-python = ">=3.8"
 license = {text = "MIT"}
 dependencies = [
     "numpy",
+    "scipy",
     "appdirs",
     "h5py",
     "xxhash>=2.0.0",
+    "wilson",
 ]
 dynamic = ["version"]
 
