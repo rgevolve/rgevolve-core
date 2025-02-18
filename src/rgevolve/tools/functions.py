@@ -11,7 +11,7 @@ mu_wet3 = matching_matrices['WET-3'].attrs['matching scale']
 reference_scale = {'SMEFT': mu_wet, 'WET': mu_wet, 'WET-4': mu_wet4, 'WET-3': mu_wet3}
 matching_scale = {'SMEFT': mu_wet, 'WET': mu_wet4, 'WET-4': mu_wet3}
 matching_basis = {'SMEFT': 'Warsaw up', 'WET': 'JMS', 'WET-4': 'JMS', 'WET-3': 'JMS'}
-next_eft = {'SMEFT': 'WET', 'WET': 'WET-4', 'WET-4': 'WET-3'}
+matching_efts = {'SMEFT': ['WET', 'WET-4', 'WET-3'], 'WET': ['WET-4', 'WET-3'], 'WET-4': ['WET-3']}
 
 @lru_cache(maxsize=None)
 def evolution_data(eft, basis):
@@ -115,14 +115,14 @@ def run_and_match(eft_in, eft_out, basis_in, basis_out, sector_in, sector_out, s
         if sector_in != sector_out:
             raise ValueError("Running and translating should only be done for the same sector.")
         return run_and_translate(eft_in, basis_in, basis_out, sector_in, scale_in, scale_out)
+    if eft_out not in reference_scale.keys():
+        raise ValueError(f"Unknown EFT {eft_out}")
     run_and_match_matrix = run_and_translate(eft_in, basis_in, matching_basis[eft_in], sector_in, scale_in, reference_scale[eft_in])
     if eft_in != 'SMEFT':
         # `get_matching_evolution_matrix` runs from reference scale to matching scale
         # not needed in SMEFT: matching_scale['SMEFT'] == reference_scale['SMEFT']
         run_and_match_matrix = get_matching_evolution_matrix(eft_in, sector_in) @ run_and_match_matrix
-    eft = eft_in
-    while True:
-        eft = next_eft[eft]
+    for eft in matching_efts[eft_in]:
         run_and_match_matrix = get_matching_matrix(eft, sector_out) @ run_and_match_matrix
         if eft == eft_out:
             return (
