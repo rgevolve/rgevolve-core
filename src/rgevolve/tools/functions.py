@@ -1,5 +1,4 @@
 import numpy as np
-from wilson import wcxf
 from functools import lru_cache
 import scipy
 from .utils import get_module
@@ -135,26 +134,26 @@ def run_and_match(eft_in, eft_out, basis_in, basis_out, sector_in, sector_out, s
 
 # useful functions for Wilson coefficients
 
+@lru_cache(maxsize=None)
 def get_wc_basis(eft, basis, sector=None, split_re_im=True):
     """Get the list of nonredundant WCs in a given sector of an EFT and basis."""
-    basis_obj = wcxf.Basis[eft, basis]
-    basis_list = []
-    if sector and sector not in basis_obj.sectors.keys():
-        raise ValueError(f"Sector {sector} not found in basis {basis} of eft {eft}")
-    if split_re_im:
-        for sec, s in basis_obj.sectors.items():
-            if not sector or sec == sector:
-                for name, d in s.items():
-                    if not d or 'real' not in d or not d['real']:
-                        basis_list.append((name, 'R'))
-                        basis_list.append((name, 'I'))
-                    else:
-                        basis_list.append((name, 'R'))
+    sectors_available = set(evolution_data(eft, basis)['regular'].keys())
+    if sector:
+        if sector not in sectors_available:
+            raise ValueError(f"Sector {sector} not found in basis {basis} of eft {eft}")
+        sectors = [sector]
     else:
-        for sec, s in basis_obj.sectors.items():
-            if not sector or sec == sector:
-                for name, d in s.items():
-                    basis_list.append(name)
+        sectors = sectors_available
+    basis_list = []
+    for sec in sectors:
+        wilson_coefficients = evolution_data(eft, basis)['regular'][sec].attrs['Wilson coefficients']
+        for wc in wilson_coefficients:
+            if split_re_im:
+                basis_list.append((wc[0], 'R'))
+                if wc[1] == 'C':
+                    basis_list.append((wc[0], 'I'))
+            else:
+                basis_list.append(wc[0])
     return sorted(basis_list)
 
 def get_coeff_mask_sector(eft, basis, sector, coeffs):

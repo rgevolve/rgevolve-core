@@ -17,7 +17,6 @@ dependencies = [
     "appdirs",
     "h5py",
     "xxhash>=2.0.0",
-    "wilson",
 ]
 dynamic = ["version"]
 
