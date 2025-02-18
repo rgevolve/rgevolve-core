@@ -85,7 +85,10 @@ def load_data(package_name):
         'regular': data_h5['RG evolution'],
         'inverse': cache_h5
     }
-    translation = data_h5['Translation']
+    if 'Translation' in data_h5:
+        translation = data_h5['Translation']
+    else:
+        translation = None
     return evolution, translation
 
 def load_matching_data(package_name):
