@@ -31,7 +31,7 @@ def get_evolution_matrix(eft, basis, sector, scale_id, inverse=False):
 
 @lru_cache(maxsize=None)
 def get_matching_evolution_matrix(eft, sector):
-    return matching_evolution_matrices[eft][sector_out][()]
+    return matching_evolution_matrices[eft][sector][()]
 
 @lru_cache(maxsize=None)
 def get_matching_matrix(eft, sector):
@@ -115,20 +115,22 @@ def run_and_match(eft_in, eft_out, basis_in, basis_out, sector_in, sector_out, s
         if sector_in != sector_out:
             raise ValueError("Running and translating should only be done for the same sector.")
         return run_and_translate(eft_in, basis_in, basis_out, sector_in, scale_in, scale_out)
+    run_and_match_matrix = run_and_translate(eft_in, basis_in, matching_basis[eft_in], sector_in, scale_in, reference_scale[eft_in])
+    if eft_in != 'SMEFT':
+        # `get_matching_evolution_matrix` runs from reference scale to matching scale
+        # not needed in SMEFT: matching_scale['SMEFT'] == reference_scale['SMEFT']
+        run_and_match_matrix = get_matching_evolution_matrix(eft_in, sector_in) @ run_and_match_matrix
     eft = eft_in
-    basis = basis_in
-    scale = scale_in
-    run_and_match_matrix = run_and_translate(eft, basis, matching_basis[eft], sector_in, scale, matching_scale[eft])
     while True:
         eft = next_eft[eft]
-        run_and_match_matrix = matching_matrices[eft][sector] @ run_and_match_matrix
+        run_and_match_matrix = get_matching_matrix(eft, sector_out) @ run_and_match_matrix
         if eft == eft_out:
             return (
                 run_and_translate(eft, matching_basis[eft], basis_out, sector_out, reference_scale[eft], scale_out)
                 @ run_and_match_matrix
             )
         else:
-            run_and_match_matrix = get_matching_evolution_matrix(eft, sector) @ run_and_match_matrix
+            run_and_match_matrix = get_matching_evolution_matrix(eft, sector_out) @ run_and_match_matrix
 
 
 # useful functions for Wilson coefficients
