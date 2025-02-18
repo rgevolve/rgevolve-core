@@ -94,7 +94,7 @@ def load_matching_data(package_name):
     return data_h5['RG evolution'], data_h5['Matching']
 
 def normalize(name):
-    return re.sub(r'[^a-zA-Z0-9]+', '-', name).strip('-').lower()
+    return re.sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower()
 
 @lru_cache(maxsize=None)
 def get_module(eft, basis):
