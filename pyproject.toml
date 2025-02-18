@@ -15,6 +15,7 @@ dependencies = [
     "numpy",
     "appdirs",
     "h5py",
+    "xxhash>=2.0.0",
 ]
 dynamic = ["version"]
 

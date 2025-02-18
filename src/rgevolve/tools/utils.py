@@ -5,6 +5,17 @@ import h5py
 import numpy as np
 import re
 from functools import lru_cache
+import xxhash
+
+def hash_h5_dataset(dset):
+    """Compute a fast hash of an HDF5 dataset using xxhash."""
+    hash_func = xxhash.xxh3_64()
+    if dset.size < 10_000_000:
+        hash_func.update(dset[()].tobytes())
+    else:
+        for chunk in dset:
+            hash_func.update(chunk.tobytes())
+    return hash_func.hexdigest()
 
 def get_data_path(package_name):
     """Return the path to the data file."""
@@ -21,7 +32,7 @@ def get_cache_path(package_name):
         os.makedirs(cachedir)
     return os.path.join(cachedir, f'{package_name}.h5')
 
-def update_cache(cache_path, package_name, data_h5):
+def update_cache(cache_path, package_name, evolution_data):
     if os.path.exists(cache_path):
         mode = "r+"  # Open in read/write mode if it exists
     else:
@@ -29,45 +40,45 @@ def update_cache(cache_path, package_name, data_h5):
     try:
         with h5py.File(cache_path, mode) as h5file:
             if mode == "r+":
-                for sector, RG_evolution in data_h5['RG evolution'].items():
-                    if sector in h5file and h5file[sector].attrs['hash'] == hash(RG_evolution):
+                for sector, evolution_matrices in evolution_data.items():
+                    if sector in h5file and h5file[sector].attrs['hash'] == hash_h5_dataset(evolution_matrices):
                         continue
                     elif sector in h5file:
                         print(f"Updating cache file for {package_name}")
                         print(f"Updating sector {sector} (hash mismatch)")
                         inverses = np.array([
                             np.linalg.inv(matrix)
-                            for matrix in RG_evolution
+                            for matrix in evolution_matrices
                         ])
                         h5file[sector][...] = inverses
-                        h5file[sector].attrs['hash'] = hash(RG_evolution)
+                        h5file[sector].attrs['hash'] = hash_h5_dataset(evolution_matrices)
                     else:
                         print(f"Updating cache file for {package_name}")
                         print(f"Adding sector {sector}")
                         inverses = np.array([
                             np.linalg.inv(matrix)
-                            for matrix in RG_evolution
+                            for matrix in evolution_matrices
                         ])
                         h5file.create_dataset(sector, data=inverses, compression="gzip")
-                        h5file[sector].attrs['hash'] = hash(RG_evolution)
+                        h5file[sector].attrs['hash'] = hash_h5_dataset(evolution_matrices)
             else:
                 print(f"Creating new cache file for {package_name}")
-                for sector, RG_evolution in data_h5['RG evolution'].items():
+                for sector, evolution_matrices in evolution_data.items():
                     print(f"Adding sector {sector}")
                     inverses = np.array([
                         np.linalg.inv(matrix)
-                        for matrix in RG_evolution
+                        for matrix in evolution_matrices
                     ])
                     h5file.create_dataset(sector, data=inverses, compression="gzip")
-                    h5file[sector].attrs['hash'] = hash(RG_evolution)
+                    h5file[sector].attrs['hash'] = hash_h5_dataset(evolution_matrices)
     except BlockingIOError:
         pass
 
 def load_data(package_name):
     data_path = get_data_path(package_name)
-    cache_path = get_cache_path(package_name)
     data_h5 = h5py.File(data_path, 'r')
-    update_cache(cache_path, package_name, data_h5)
+    cache_path = get_cache_path(package_name)
+    update_cache(cache_path, package_name, data_h5['RG evolution'])
     cache_h5 = h5py.File(cache_path, 'r')
     evolution = {
         'regular': data_h5['RG evolution'],
@@ -75,6 +86,11 @@ def load_data(package_name):
     }
     translation = data_h5['Translation']
     return evolution, translation
+
+def load_matching_data(package_name):
+    data_path = get_data_path(package_name)
+    data_h5 = h5py.File(data_path, 'r')
+    return data_h5['RG evolution'], data_h5['Matching']
 
 def normalize(name):
     return re.sub(r'[^a-zA-Z0-9]+', '-', name).strip('-').lower()
@@ -89,13 +105,3 @@ def get_module(eft, basis):
             f"The module '{module_name}' is not installed. If available, install it with:\n"
             f"    pip install {module_name}"
         )
-
-@lru_cache(maxsize=None)
-def evolution_data(eft, basis):
-    module = get_module(eft, basis)
-    return module.evolution
-
-@lru_cache(maxsize=None)
-def translation_data(eft, basis):
-    module = get_module(eft, basis)
-    return module.translation
