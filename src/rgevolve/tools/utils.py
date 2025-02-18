@@ -41,7 +41,8 @@ def update_cache(cache_path, package_name, evolution_data):
         with h5py.File(cache_path, mode) as h5file:
             if mode == "r+":
                 for sector, evolution_matrices in evolution_data.items():
-                    if sector in h5file and h5file[sector].attrs['hash'] == hash_h5_dataset(evolution_matrices):
+                    hash_val = hash_h5_dataset(evolution_matrices)
+                    if sector in h5file and h5file[sector].attrs['hash'] == hash_val:
                         continue
                     elif sector in h5file:
                         print(f"Updating cache file for {package_name}")
@@ -51,7 +52,7 @@ def update_cache(cache_path, package_name, evolution_data):
                             for matrix in evolution_matrices
                         ])
                         h5file[sector][...] = inverses
-                        h5file[sector].attrs['hash'] = hash_h5_dataset(evolution_matrices)
+                        h5file[sector].attrs['hash'] = hash_val
                     else:
                         print(f"Updating cache file for {package_name}")
                         print(f"Adding sector {sector}")
@@ -60,7 +61,7 @@ def update_cache(cache_path, package_name, evolution_data):
                             for matrix in evolution_matrices
                         ])
                         h5file.create_dataset(sector, data=inverses, compression="gzip")
-                        h5file[sector].attrs['hash'] = hash_h5_dataset(evolution_matrices)
+                        h5file[sector].attrs['hash'] = hash_val
             else:
                 print(f"Creating new cache file for {package_name}")
                 for sector, evolution_matrices in evolution_data.items():
