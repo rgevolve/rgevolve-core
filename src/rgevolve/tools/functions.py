@@ -1,6 +1,7 @@
 import numpy as np
 from functools import lru_cache
 import scipy
+from typing import List
 from .utils import get_module
 from rgevolve.matching import matching_evolution_matrices, matching_matrices
 
@@ -156,12 +157,22 @@ def get_wc_basis(eft, basis, sector=None, split_re_im=True):
                 basis_list.append(wc[0])
     return sorted(basis_list)
 
-def get_coeff_mask_sector(eft, basis, sector, coeffs):
-    wc_basis_sector = get_wc_basis(eft, basis, sector, split_re_im=True)
-    if not all([c in wc_basis_sector for c in coeffs]):
+def get_wc_mask(eft, basis, sector, wcs):
+    wc_basis_sector = get_wc_basis(eft, basis, sector)
+    if not all([wc in wc_basis_sector for wc in wcs]):
         raise ValueError(f"Invalid coefficients in sector {sector} of basis {basis} of EFT {eft}")
-    return np.array([c in coeffs for c in wc_basis_sector])
+    return np.array([wc in wcs for wc in wc_basis_sector])
 
+def get_sector_indices(eft: str, basis: str, sectors: List[str]) -> np.ndarray:
+    basis_full = get_wc_basis(eft, basis)
+    return np.concatenate([
+        [basis_full.index(wc) for wc in get_wc_basis(eft, basis, sector)]
+        for sector in sectors
+    ])
+
+####################################################################################################
+## DEPRECATED
+####################################################################################################
 def wc_real_to_real_sector_idx(eft, basis, sector):
     basis_real_full = get_wc_basis(eft, basis, split_re_im=True)
     basis_real_sector = get_wc_basis(eft, basis, sector=sector, split_re_im=True)
@@ -178,7 +189,7 @@ def compute_observable_RGs_from_scale(sectors_eft_info, eft_in, basis_in, scale_
             sector_out=sector_obs,
             scale_in=scale_in, scale_out=scale_obs
         )
-        coeff_mask_sector = get_coeff_mask_sector(eft_obs, basis_obs, sector_obs, coeffs_obs)
+        coeff_mask_sector = get_wc_mask(eft_obs, basis_obs, sector_obs, coeffs_obs)
         RGs.append(m[coeff_mask_sector])
     return RGs
 
@@ -192,3 +203,4 @@ def compute_observable_RGs(sectors_eft_info, eft_in, basis_in):
             RGs.append(scipy.linalg.block_diag(*compute_observable_RGs_from_scale(sectors_eft_info, eft_in, basis_in, scale)))
     RGs = np.array(RGs)
     return RG_scales, RGs
+####################################################################################################
