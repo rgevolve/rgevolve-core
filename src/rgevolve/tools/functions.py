@@ -54,7 +54,7 @@ def get_translator(eft, basis_in, basis_out, sector):
         )
 
 @lru_cache(maxsize=None)
-def interpolate_from_ref(eft, basis, sector, scale, inverse=False):
+def interpolate_from_ref(eft, basis, scale, sector, inverse=False):
     scales = get_scales(eft, basis)
     if list(scales) != sorted(scales):  # scales assumed sorted in ascending order
         raise ValueError(f'RG scales for EFT {eft} are not ordered in ascending order')
@@ -75,49 +75,48 @@ def interpolate_from_ref(eft, basis, sector, scale, inverse=False):
         return mat_low + (mat_high - mat_low) * scale_factor
 
 @lru_cache(maxsize=None)
-def run(eft, basis, sector, scale_in, scale_out):
+def run(eft, basis, scale_in, scale_out, sector):
     # run within a certain eft, basis, sector
     if scale_in == scale_out:
         return np.identity(get_evolution_matrix(eft, basis, sector, 0).shape[0])
     if scale_in == reference_scale[eft]:
-        return interpolate_from_ref(eft, basis, sector, scale_out)
+        return interpolate_from_ref(eft, basis, scale_out, sector)
     if scale_out == reference_scale[eft]:
-        return interpolate_from_ref(eft, basis, sector, scale_in, inverse=True)
-    return interpolate_from_ref(eft, basis, sector, scale_out) @ interpolate_from_ref(eft, basis, sector, scale_in, inverse=True)
+        return interpolate_from_ref(eft, basis, scale_in, sector, inverse=True)
+    return interpolate_from_ref(eft, basis, scale_out, sector) @ interpolate_from_ref(eft, basis, scale_in, sector, inverse=True)
 
 @lru_cache(maxsize=None)
-def run_and_translate(eft, basis_in, basis_out, sector, scale_in, scale_out):
+def run_and_translate(eft, basis_in, basis_out, scale_in, scale_out, sector):
     # run within an eft, sector but from one basis to another
     if basis_in == basis_out:
-        return run(eft, basis_in, sector, scale_in, scale_out)
+        return run(eft, basis_in, scale_in, scale_out, sector)
     translator = get_translator(eft, basis_in, basis_out, sector)
     if scale_in == reference_scale[eft] and scale_out == reference_scale[eft]:
         return translator
     if scale_in == reference_scale[eft] and scale_out != reference_scale[eft]:
         return (
-            run(eft, basis_out, sector, reference_scale[eft], scale_out)
+            run(eft, basis_out, reference_scale[eft], scale_out, sector)
             @ translator
         )
     if scale_in != reference_scale[eft] and scale_out == reference_scale[eft]:
         return (
             translator
-            @ run(eft, basis_in, sector, scale_in, reference_scale[eft])
+            @ run(eft, basis_in, scale_in, reference_scale[eft], sector)
         )
     return (
-        run(eft, basis_out, sector, reference_scale[eft], scale_out)
+        run(eft, basis_out, reference_scale[eft], scale_out, sector)
         @ translator
-        @ run(eft, basis_in, sector, scale_in, reference_scale[eft])
+        @ run(eft, basis_in, scale_in, reference_scale[eft], sector)
     )
 
 @lru_cache(maxsize=None)
-def run_and_match(eft_in, eft_out, basis_in, basis_out, sector_in, sector_out, scale_in, scale_out):
+def run_and_match(eft_in, eft_out, basis_in, basis_out, scale_in, scale_out, sector_out):
     if eft_in == eft_out:
-        if sector_in != sector_out:
-            raise ValueError("Running and translating should only be done for the same sector.")
-        return run_and_translate(eft_in, basis_in, basis_out, sector_in, scale_in, scale_out)
+        return run_and_translate(eft_in, basis_in, basis_out, scale_in, scale_out, sector_out)
     if eft_out not in reference_scale.keys():
         raise ValueError(f"Unknown EFT {eft_out}")
-    run_and_match_matrix = run_and_translate(eft_in, basis_in, matching_basis[eft_in], sector_in, scale_in, reference_scale[eft_in])
+    sector_in = 'dB=dL=0' if eft_in == 'SMEFT' else sector_out
+    run_and_match_matrix = run_and_translate(eft_in, basis_in, matching_basis[eft_in], scale_in, reference_scale[eft_in], sector_in)
     if eft_in != 'SMEFT':
         # `get_matching_evolution_matrix` runs from reference scale to matching scale
         # not needed in SMEFT: matching_scale['SMEFT'] == reference_scale['SMEFT']
@@ -126,7 +125,7 @@ def run_and_match(eft_in, eft_out, basis_in, basis_out, sector_in, sector_out, s
         run_and_match_matrix = get_matching_matrix(eft, sector_out) @ run_and_match_matrix
         if eft == eft_out:
             return (
-                run_and_translate(eft, matching_basis[eft], basis_out, sector_out, reference_scale[eft], scale_out)
+                run_and_translate(eft, matching_basis[eft], basis_out, reference_scale[eft], scale_out, sector_out)
                 @ run_and_match_matrix
             )
         else:
@@ -185,9 +184,8 @@ def compute_observable_RGs_from_scale(sectors_eft_info, eft_in, basis_in, scale_
         m = run_and_match(
             eft_in=eft_in, eft_out=eft_obs,
             basis_in=basis_in, basis_out=basis_obs,
-            sector_in='dB=dL=0' if eft_in == 'SMEFT' else sector_obs,
+            scale_in=scale_in, scale_out=scale_obs,
             sector_out=sector_obs,
-            scale_in=scale_in, scale_out=scale_obs
         )
         coeff_mask_sector = get_wc_mask(eft_obs, basis_obs, sector_obs, coeffs_obs)
         RGs.append(m[coeff_mask_sector])
