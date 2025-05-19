@@ -2,7 +2,9 @@ import numpy as np
 from functools import lru_cache
 import scipy
 from typing import List
-from .utils import get_module
+from importlib.metadata import distributions
+from .utils import get_module, normalize
+from .bases_available import bases_available
 from rgevolve.matching import matching_evolution_matrices, matching_matrices
 
 mu_wet = matching_matrices['WET'].attrs['matching scale']
@@ -15,6 +17,23 @@ matching_efts = {'SMEFT': ['WET', 'WET-4', 'WET-3'], 'WET': ['WET-4', 'WET-3'], 
 matching_sectors = {
     wet_sector: matching_matrices['WET'][wet_sector].attrs['from sector']
     for wet_sector in matching_matrices['WET']
+}
+
+efts_available = {}
+for source_eft, target_efts in matching_efts.items():
+    if source_eft not in efts_available:
+        efts_available[source_eft] = [source_eft]
+    for target_eft in target_efts:
+        if target_eft not in efts_available:
+            efts_available[target_eft] = [target_eft]
+        efts_available[target_eft].append(source_eft)
+
+installed_distributions = {dist.metadata['Name'] for dist in distributions()}
+bases_installed = {
+    eft: [
+        basis for basis in bases
+        if f"rgevolve.{normalize(eft)}.{normalize(basis)}" in installed_distributions
+    ] for eft, bases in bases_available.items()
 }
 
 @lru_cache(maxsize=None)
