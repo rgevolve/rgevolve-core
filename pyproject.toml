@@ -1,16 +1,17 @@
 [build-system]
-requires = ["setuptools >= 64.0"]
+requires = ["setuptools >= 80.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rgevolve"
+name = "rgevolve-core"
 authors = [
     {name = "Aleks Smolkovič", email = "aleks.smolkovic@ijs.si"},
     {name = "Peter Stangl", email = "peter.stangl@cern.ch"},
 ]
-description = "Package providing Renormalization Group Evolution Matrices."
+description = "Package providing the core tools for Renormalization Group Evolution Matrices."
 requires-python = ">=3.8"
 license = {text = "MIT"}
+readme = "README.md"
 dependencies = [
     "numpy",
     "scipy",
