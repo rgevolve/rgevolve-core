@@ -102,15 +102,8 @@ jobs:
                 name: rgevolve_core-dist-${{ github.sha }}
                 path: dist
 
-            # - name: Upload to PyPI
-            #   uses: pypa/gh-action-pypi-publish@release/v1
-            #   with:
-            #     user:     ${{ secrets.TWINE_USERNAME }}
-            #     password: ${{ secrets.TWINE_PASSWORD }}
-
-            - name: Upload to TestPyPI
+            - name: Upload to PyPI
               uses: pypa/gh-action-pypi-publish@release/v1
               with:
-                repository-url: https://test.pypi.org/legacy/
-                user: ${{ secrets.TEST_TWINE_USERNAME }}
-                password: ${{ secrets.TEST_TWINE_PASSWORD }}
+                user:     ${{ secrets.TWINE_USERNAME }}
+                password: ${{ secrets.TWINE_PASSWORD }}
