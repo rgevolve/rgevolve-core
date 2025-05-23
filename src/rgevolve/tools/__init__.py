@@ -6,3 +6,4 @@ from .functions import (
     efts_available, bases_available, bases_installed,
     reference_scale,
 )
+from .supersectors import supersectors
