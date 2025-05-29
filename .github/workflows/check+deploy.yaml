@@ -70,7 +70,7 @@ jobs:
               run: |
                 pushd _src
                 export TAG_VERSION=${GITHUB_REF##refs/tags/v}
-                export SRC_VERSION=$(python3 -c "from rgevolve.tools._version import __version__; print(__version__)")
+                export SRC_VERSION=$(python3 -c "from rgevolve.tools._version import __version__; print(__version__)" | tail -n 1)
                 if [[ ${TAG_VERSION} != ${SRC_VERSION} ]] ; then
                   echo "tag/release version and source code version disagree, exiting"
                   exit 1
