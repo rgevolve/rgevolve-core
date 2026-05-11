@@ -1,7 +1,7 @@
 import numpy as np
 from functools import lru_cache
 import scipy
-from typing import List
+from typing import Dict, List, Optional, Sequence, Tuple
 from importlib.metadata import distributions
 from .utils import get_module, normalize
 from .bases_available import bases_available
@@ -133,11 +133,13 @@ def run_and_translate(eft, basis_in, basis_out, scale_in, scale_out, sector):
     )
 
 @lru_cache(maxsize=None)
-def run_and_match(eft_in, eft_out, basis_in, basis_out, scale_in, scale_out, sector_out):
+def _run_and_match_sector(eft_in, eft_out, basis_in, basis_out, scale_in, scale_out, sector_out):
     if eft_in == eft_out:
         return run_and_translate(eft_in, basis_in, basis_out, scale_in, scale_out, sector_out)
     if eft_out not in reference_scale.keys():
         raise ValueError(f"Unknown EFT {eft_out}")
+    if eft_in not in efts_available.get(eft_out, []):
+        raise ValueError(f"No matching path from EFT {eft_in!r} to EFT {eft_out!r}")
     sector_in = matching_sectors[sector_out] if eft_in == 'SMEFT' else sector_out
     run_and_match_matrix = run_and_translate(eft_in, basis_in, matching_basis[eft_in], scale_in, reference_scale[eft_in], sector_in)
     if eft_in != 'SMEFT':
@@ -153,6 +155,201 @@ def run_and_match(eft_in, eft_out, basis_in, basis_out, scale_in, scale_out, sec
             )
         else:
             run_and_match_matrix = get_matching_evolution_matrix(eft, sector_out) @ run_and_match_matrix
+
+
+def _input_sector(eft_in: str, eft_out: str, sector_out: str) -> str:
+    """Return the input sector implied by an output sector.
+
+    Single-sector today; future bases may map one sector_out
+    to multiple input sectors.
+    """
+    if eft_in == eft_out:
+        return sector_out
+    if eft_in == 'SMEFT':
+        return matching_sectors[sector_out]
+    return sector_out
+
+
+def _wc_indices_in_basis(
+    wcs: Sequence[Tuple[str, str]],
+    wc_basis: List[Tuple[str, str]],
+    label: str,
+) -> List[int]:
+    """Validate that ``wcs`` is a duplicate-free subset of ``wc_basis``
+    and return their indices in ``wc_basis``.
+
+    Raises ValueError on duplicate or unknown WCs.
+    """
+    wc_to_idx = {wc: idx for idx, wc in enumerate(wc_basis)}
+    wcs_seen: set = set()
+    indices: List[int] = []
+    for wc in wcs:
+        if wc in wcs_seen:
+            raise ValueError(f"Duplicate Wilson coefficient {wc!r}")
+        wcs_seen.add(wc)
+        if wc not in wc_to_idx:
+            raise ValueError(f"Wilson coefficient {wc!r} not in {label}")
+        indices.append(wc_to_idx[wc])
+    return indices
+
+
+@lru_cache(maxsize=None)
+def _wc_to_sector_and_idx_map(
+    eft: str,
+    basis: str,
+) -> Dict[Tuple[str, str], Tuple[str, int]]:
+    """Map each WC to (sector, block_idx) for a given (eft, basis).
+
+    ``block_idx`` is the WC's index in ``get_wc_basis(eft, basis, sector)``.
+    Sectors partition the basis, so each WC maps to exactly one sector.
+    """
+    m: Dict[Tuple[str, str], Tuple[str, int]] = {}
+    for sector in evolution_data(eft, basis)['regular'].keys():
+        for idx, wc in enumerate(get_wc_basis(eft, basis, sector)):
+            m[wc] = (sector, idx)
+    return m
+
+
+def _group_wcs_by_sector(
+    eft: str,
+    basis: str,
+    wcs: Sequence[Tuple[str, str]],
+) -> Dict[str, List[Tuple[int, int]]]:
+    """Group WCs by sector.
+
+    Returns ``{sector: [(block_idx, M_idx), ...]}`` where ``block_idx``
+    is the WC's index in ``get_wc_basis(eft, basis, sector)`` (i.e. its
+    position in the per-sector block matrix) and ``M_idx`` is its
+    position in the input ``wcs`` list (i.e. its position in the
+    assembled result matrix).
+
+    Raises ValueError on duplicate WCs or WCs not present in any
+    sector of (eft, basis).
+    """
+    wc_map = _wc_to_sector_and_idx_map(eft, basis)
+    grouped: Dict[str, List[Tuple[int, int]]] = {}
+    wcs_seen: set = set()
+    for M_idx, wc in enumerate(wcs):
+        if wc in wcs_seen:
+            raise ValueError(f"Duplicate Wilson coefficient {wc!r}")
+        wcs_seen.add(wc)
+        if wc not in wc_map:
+            raise ValueError(
+                f"Wilson coefficient {wc!r} not found in any sector "
+                f"of basis '{basis}' of EFT '{eft}'"
+            )
+        sector, block_idx = wc_map[wc]
+        grouped.setdefault(sector, []).append((block_idx, M_idx))
+    return grouped
+
+
+@lru_cache(maxsize=None)
+def _run_and_match_impl(
+    eft_in: str,
+    eft_out: str,
+    basis_in: str,
+    basis_out: str,
+    scale_in: float,
+    scale_out: float,
+    sector_out: Optional[str],
+    wcs_in: Optional[Tuple[Tuple[str, str], ...]],
+    wcs_out: Optional[Tuple[Tuple[str, str], ...]],
+) -> np.ndarray:
+    if sector_out is None and (wcs_in is None or wcs_out is None):
+        raise ValueError(
+            "When sector_out is None, both wcs_in and wcs_out must be provided."
+        )
+    if sector_out is not None:
+        # Mode A — per-sector block, optional row/col subsetting
+        M = _run_and_match_sector(
+            eft_in, eft_out, basis_in, basis_out, scale_in, scale_out, sector_out,
+        )
+        if wcs_in is None and wcs_out is None:
+            return M
+        if wcs_out is not None:
+            wc_basis_out = get_wc_basis(eft_out, basis_out, sector_out)
+            row_idx = _wc_indices_in_basis(
+                wcs_out, wc_basis_out,
+                f"sector '{sector_out}' of basis '{basis_out}' of EFT '{eft_out}'",
+            )
+            M = M[row_idx, :]
+        if wcs_in is not None:
+            sector_in = _input_sector(eft_in, eft_out, sector_out)
+            wc_basis_in = get_wc_basis(eft_in, basis_in, sector_in)
+            col_idx = _wc_indices_in_basis(
+                wcs_in, wc_basis_in,
+                f"input sector '{sector_in}' of basis '{basis_in}' of EFT '{eft_in}'",
+            )
+            M = M[:, col_idx]
+        return M
+
+    # Mode B — sector_out is None, both lists given
+    groups_out = _group_wcs_by_sector(eft_out, basis_out, wcs_out)
+    groups_in = _group_wcs_by_sector(eft_in, basis_in, wcs_in)
+    M = np.zeros((len(wcs_out), len(wcs_in)))
+    for sector_out, pairs_out in groups_out.items():
+        sector_in = _input_sector(eft_in, eft_out, sector_out)
+        pairs_in = groups_in.get(sector_in, [])
+        if not pairs_in:
+            continue  # cross-sector entries stay zero
+        block = _run_and_match_sector(
+            eft_in, eft_out, basis_in, basis_out, scale_in, scale_out, sector_out,
+        )
+        block_idx_out = np.fromiter((p[0] for p in pairs_out), dtype=int)
+        M_idx_out = np.fromiter((p[1] for p in pairs_out), dtype=int)
+        block_idx_in = np.fromiter((p[0] for p in pairs_in), dtype=int)
+        M_idx_in = np.fromiter((p[1] for p in pairs_in), dtype=int)
+        M[np.ix_(M_idx_out, M_idx_in)] = block[np.ix_(block_idx_out, block_idx_in)]
+    return M
+
+
+def run_and_match(
+    eft_in: str,
+    eft_out: str,
+    basis_in: str,
+    basis_out: str,
+    scale_in: float,
+    scale_out: float,
+    sector_out: Optional[str] = None,
+    wcs_in: Optional[Sequence[Tuple[str, str]]] = None,
+    wcs_out: Optional[Sequence[Tuple[str, str]]] = None,
+) -> np.ndarray:
+    """Returns the matrix that takes a vector of input Wilson coefficients
+    (at ``scale_in`` in ``eft_in`` / ``basis_in``) to a vector of output
+    Wilson coefficients (at ``scale_out`` in ``eft_out`` / ``basis_out``)
+    via RG evolution and, if ``eft_in != eft_out``, matching, and if ``basis_in != basis_out``, translation.
+
+    Two operating modes:
+
+    * ``sector_out`` given (per-sector mode). The full per-sector block
+      is built; ``wcs_in`` / ``wcs_out`` are optional and, if given,
+      subset and reorder the matrix's columns / rows. ``wcs_out`` must
+      be a subset of ``get_wc_basis(eft_out, basis_out, sector_out)``;
+      ``wcs_in`` must be a subset of the canonical basis of the input
+      sector implied by ``sector_out``.
+
+    * ``sector_out=None`` (full-EFT mode). Both ``wcs_in`` and
+      ``wcs_out`` are mandatory and may span multiple sectors. The
+      returned matrix has shape ``(len(wcs_out), len(wcs_in))``;
+      entries connecting WCs that don't lie in matched sectors are
+      exactly ``0``.
+
+    ``wcs_in`` / ``wcs_out`` may be lists or tuples; results are cached
+    per unique (canonicalised-tuple) call.
+
+    Raises ``ValueError`` on duplicate WCs, WCs outside the allowed
+    set, or invalid argument combinations.
+
+    Note (future): future bases may map one ``sector_out`` to multiple
+    input sectors. This release supports a single input sector per
+    ``sector_out``.
+    """
+    return _run_and_match_impl(
+        eft_in, eft_out, basis_in, basis_out, scale_in, scale_out,
+        sector_out,
+        tuple(wcs_in) if wcs_in is not None else None,
+        tuple(wcs_out) if wcs_out is not None else None,
+    )
 
 
 # useful functions for Wilson coefficients
