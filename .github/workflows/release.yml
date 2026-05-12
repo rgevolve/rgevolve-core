@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      use-testpypi:
+        description: 'Publish to TestPyPI instead of production PyPI (for dry-run rehearsals)'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    uses: rgevolve/.github/.github/workflows/pypi-publish.yml@main
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.use-testpypi) && 'https://test.pypi.org/legacy/' || '' }}
