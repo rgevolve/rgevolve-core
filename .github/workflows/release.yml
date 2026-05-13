@@ -46,3 +46,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.use-testpypi) && 'https://test.pypi.org/legacy/' || '' }}
+          skip-existing: true
