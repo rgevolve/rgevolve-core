@@ -11,10 +11,38 @@ on:
         default: false
 
 jobs:
-  publish:
-    uses: rgevolve/.github/.github/workflows/pypi-publish.yml@main
+  build-and-publish:
+    name: Build & publish
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
-    with:
-      repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.use-testpypi) && 'https://test.pypi.org/legacy/' || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Verify version is final (production target only)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.use-testpypi) }}
+        run: |
+          VERSION=$(ls dist/*.tar.gz | sed -E 's|.*-(.*)\.tar\.gz|\1|')
+          echo "Built version: $VERSION"
+          case "$VERSION" in
+            *+*|*dev*) echo "Refusing to publish non-final version $VERSION to production PyPI"; exit 1 ;;
+          esac
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.use-testpypi) && 'https://test.pypi.org/legacy/' || '' }}
