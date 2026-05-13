@@ -1,8 +1,6 @@
 name: Release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       use-testpypi:
@@ -34,7 +32,7 @@ jobs:
           python -m build
 
       - name: Verify version is final (production target only)
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.use-testpypi) }}
+        if: ${{ !inputs.use-testpypi }}
         run: |
           VERSION=$(ls dist/*.tar.gz | sed -E 's|.*-(.*)\.tar\.gz|\1|')
           echo "Built version: $VERSION"
@@ -45,5 +43,5 @@ jobs:
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.use-testpypi) && 'https://test.pypi.org/legacy/' || '' }}
+          repository-url: ${{ inputs.use-testpypi && 'https://test.pypi.org/legacy/' || '' }}
           skip-existing: true
