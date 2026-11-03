@@ -296,3 +296,137 @@ class TestRunAndMatchModeB(unittest.TestCase):
                 wcs_in=[good_in, good_in],
                 wcs_out=[good_out],
             )
+
+
+def _has_all_companions():
+    """True if the companion package of every basis in bases_available
+    is installed."""
+    try:
+        from rgevolve.tools import bases_available, bases_installed
+    except ImportError:
+        return False
+    return all(
+        set(bases) <= set(bases_installed.get(eft, []))
+        for eft, bases in bases_available.items()
+    )
+
+
+def _basis_changes():
+    """(eft, basis_in, basis_out) for every ordered pair of distinct bases
+    of an EFT in bases_available."""
+    from rgevolve.tools import bases_available
+    return [
+        (eft, basis_in, basis_out)
+        for eft, bases in bases_available.items()
+        for basis_in in bases
+        for basis_out in bases
+        if basis_in != basis_out
+    ]
+
+
+# One sector per EFT whose translators are neither the identity nor unchanged
+# by reversing both axes, so that a result in the wrong order cannot pass. The
+# SMEFT sectors without quarks translate by the identity, hence 'mue'.
+_REF_SCALE_SECTORS = {
+    'SMEFT': 'mue', 'WET': 'sbemu', 'WET-4': 'sdemu', 'WET-3': 'sdemu',
+}
+
+
+@unittest.skipUnless(
+    _has_all_companions(),
+    "Requires the companion packages of every basis in bases_available",
+)
+class TestReferenceScaleBasisChange(unittest.TestCase):
+    """Issue #2: scale_in == scale_out == reference_scale[eft] with
+    basis_in != basis_out. run_and_match got an h5py Dataset from
+    get_translator there, which h5py cannot index with np.ix_ (Mode B)
+    or with an index list out of order (Mode A)."""
+
+    def test_get_translator_returns_array(self):
+        from rgevolve.tools.functions import get_translator
+        for eft, basis_in, basis_out in _basis_changes():
+            with self.subTest(eft=eft, basis_in=basis_in, basis_out=basis_out):
+                T = get_translator(
+                    eft, basis_in, basis_out, _REF_SCALE_SECTORS[eft],
+                )
+                self.assertIsInstance(T, np.ndarray)
+
+    def test_per_sector_mode(self):
+        from rgevolve.tools import run_and_match, get_wc_basis, reference_scale
+        for eft, basis_in, basis_out in _basis_changes():
+            with self.subTest(eft=eft, basis_in=basis_in, basis_out=basis_out):
+                mu = reference_scale[eft]
+                sector = _REF_SCALE_SECTORS[eft]
+                wcs_in = get_wc_basis(eft, basis_in, sector)
+                wcs_out = get_wc_basis(eft, basis_out, sector)
+                args = (eft, eft, basis_in, basis_out, mu, mu, sector)
+                in_order = run_and_match(*args, wcs_in=wcs_in, wcs_out=wcs_out)
+                self.assertEqual(in_order.shape, (len(wcs_out), len(wcs_in)))
+                M = run_and_match(*args, wcs_out=wcs_out[::-1])
+                self.assertTrue(np.array_equal(M, in_order[::-1, :]))
+                M = run_and_match(*args, wcs_in=wcs_in[::-1])
+                self.assertTrue(np.array_equal(M, in_order[:, ::-1]))
+                M = run_and_match(*args)
+                self.assertIsInstance(M, np.ndarray)
+                self.assertTrue(np.array_equal(M, in_order))
+
+    def test_full_eft_mode(self):
+        from rgevolve.tools import run_and_match, get_wc_basis, reference_scale
+        for eft, basis_in, basis_out in _basis_changes():
+            with self.subTest(eft=eft, basis_in=basis_in, basis_out=basis_out):
+                mu = reference_scale[eft]
+                sector = _REF_SCALE_SECTORS[eft]
+                wcs_in = get_wc_basis(eft, basis_in, sector)
+                wcs_out = get_wc_basis(eft, basis_out, sector)
+                args = (eft, eft, basis_in, basis_out, mu, mu)
+                in_order = run_and_match(
+                    *args, sector, wcs_in=wcs_in, wcs_out=wcs_out,
+                )
+                M = run_and_match(
+                    *args, sector_out=None, wcs_in=wcs_in, wcs_out=wcs_out,
+                )
+                self.assertTrue(np.array_equal(M, in_order))
+                M = run_and_match(
+                    *args, sector_out=None,
+                    wcs_in=wcs_in[::-1], wcs_out=wcs_out[::-1],
+                )
+                self.assertTrue(np.array_equal(M, in_order[::-1, ::-1]))
+
+
+class TestGetTranslatorBranches(unittest.TestCase):
+    """Issue #2: get_translator returns an array in each of its three
+    branches. The translation data are in memory, so this needs no
+    companion package. No installed basis pair reaches the third branch,
+    which translates via the matching basis."""
+
+    def test_every_branch_returns_array(self):
+        import io
+        from unittest import mock
+        import h5py
+        from rgevolve.tools import functions
+        jms = functions.matching_basis['WET']
+        rng = np.random.default_rng(0)
+        x_to_jms = rng.random((4, 3))
+        jms_to_y = rng.random((2, 4))
+        data = {}
+        for basis, key, matrix in (
+            ('X', str(('X', jms)), x_to_jms),
+            ('Y', str((jms, 'Y')), jms_to_y),
+        ):
+            f = h5py.File(io.BytesIO(), 'w')
+            self.addCleanup(f.close)
+            f.create_dataset(f'{key}/s', data=matrix)
+            data[basis] = f
+        get_translator = functions.get_translator.__wrapped__  # bypass the cache
+        with mock.patch.object(
+            functions, 'translation_data', lambda eft, basis: data[basis],
+        ):
+            for basis_in, basis_out, expected in (
+                (jms, 'Y', jms_to_y),
+                ('X', jms, x_to_jms),
+                ('X', 'Y', jms_to_y @ x_to_jms),
+            ):
+                with self.subTest(basis_in=basis_in, basis_out=basis_out):
+                    T = get_translator('WET', basis_in, basis_out, 's')
+                    self.assertIsInstance(T, np.ndarray)
+                    self.assertTrue(np.allclose(T, expected))

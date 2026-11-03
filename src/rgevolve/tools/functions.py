@@ -65,14 +65,16 @@ def get_scales(eft, basis):
 
 @lru_cache(maxsize=None)
 def get_translator(eft, basis_in, basis_out, sector):
+    # `[()]` reads each h5py dataset into a numpy array: callers index the
+    # translator with index lists and `np.ix_`, which a Dataset does not support
     if basis_in in {'JMS', 'Warsaw up'}:
-        return translation_data(eft, basis_out)[str((basis_in, basis_out))][sector]
+        return translation_data(eft, basis_out)[str((basis_in, basis_out))][sector][()]
     elif basis_out in {'JMS', 'Warsaw up'}:
-        return translation_data(eft, basis_in)[str((basis_in, basis_out))][sector]
+        return translation_data(eft, basis_in)[str((basis_in, basis_out))][sector][()]
     else:
         return (
-            translation_data(eft, basis_out)[str((matching_basis[eft], basis_out))][sector]
-            @ translation_data(eft, basis_in)[str((basis_in, matching_basis[eft]))][sector]
+            translation_data(eft, basis_out)[str((matching_basis[eft], basis_out))][sector][()]
+            @ translation_data(eft, basis_in)[str((basis_in, matching_basis[eft]))][sector][()]
         )
 
 @lru_cache(maxsize=None)
