@@ -200,6 +200,22 @@ class TestRunAndMatchModeA(unittest.TestCase):
                 wcs_out=[wc, wc],
             )
 
+    def test_pairs_as_lists(self):
+        # pairs read from JSON are lists (rgevolve/rgevolve-core#1)
+        from rgevolve.tools import run_and_match
+        from rgevolve.tools.functions import matching_sectors, get_wc_basis
+        sector_out = next(iter(matching_sectors))
+        wcs_out = get_wc_basis('WET', 'JMS', sector_out)[:3]
+        wcs_in = get_wc_basis('SMEFT', 'Warsaw', matching_sectors[sector_out])[:3]
+        args = ('SMEFT', 'WET', 'Warsaw', 'JMS', SCALE_IN, SCALE_OUT, sector_out)
+        expected = run_and_match(*args, wcs_in=wcs_in, wcs_out=wcs_out)
+        M = run_and_match(
+            *args,
+            wcs_in=[list(wc) for wc in wcs_in],
+            wcs_out=[list(wc) for wc in wcs_out],
+        )
+        self.assertTrue(np.array_equal(M, expected))
+
 
 @unittest.skipUnless(_has_companions(), _REQUIRES_COMPANIONS)
 class TestRunAndMatchModeB(unittest.TestCase):
@@ -318,6 +334,27 @@ class TestRunAndMatchModeB(unittest.TestCase):
                 wcs_in=[good_in, good_in],
                 wcs_out=[good_out],
             )
+
+    def test_pairs_as_lists(self):
+        # pairs read from JSON are lists (rgevolve/rgevolve-core#1)
+        from rgevolve.tools import run_and_match
+        from rgevolve.tools.functions import matching_sectors, get_wc_basis
+        sA, sB, _ = _pick_smeft_to_wet_sectors()
+        wcs_out = get_wc_basis('WET', 'JMS', sA)[:2] + get_wc_basis('WET', 'JMS', sB)[:2]
+        wcs_in = (
+            get_wc_basis('SMEFT', 'Warsaw', matching_sectors[sA])[:2]
+            + get_wc_basis('SMEFT', 'Warsaw', matching_sectors[sB])[:2]
+        )
+        args = ('SMEFT', 'WET', 'Warsaw', 'JMS', SCALE_IN, SCALE_OUT)
+        expected = run_and_match(
+            *args, sector_out=None, wcs_in=wcs_in, wcs_out=wcs_out,
+        )
+        M = run_and_match(
+            *args, sector_out=None,
+            wcs_in=[list(wc) for wc in wcs_in],
+            wcs_out=[list(wc) for wc in wcs_out],
+        )
+        self.assertTrue(np.array_equal(M, expected))
 
 
 def _has_all_companions():
@@ -587,3 +624,95 @@ class TestOffGridRun(unittest.TestCase):
             with self.subTest(mu=mu):
                 value = self.run_wet3(mu, 1.3, wcs)[0, 0]
                 self.assertLess(abs(value / expected - 1), 5e-3)
+
+
+class TestWcsForm(unittest.TestCase):
+    """rgevolve/rgevolve-core#1: run_and_match checks that wcs_in and wcs_out
+    are lists or tuples of pairs (name, 'R' | 'I') before it looks anything
+    up. A cached stub that returns its arguments replaces
+    _run_and_match_impl, so this loads no data and needs no companion
+    package. As nothing is looked up, the names need not exist in the
+    bases."""
+
+    # the issue's call, with the 'R' it left out
+    ARGS = ('SMEFT', 'WET', 'Warsaw', 'flavio', 1000.0, 4.2)
+    GOOD = {
+        'wcs_in': [('lq1_2223', 'R'), ('lq1_2213', 'R')],
+        'wcs_out': [('C9_bsmumu', 'R'), ('C9_bdmumu', 'R')],
+    }
+    SECTORS = (None, 'sb')  # full-EFT mode and per-sector mode
+    FORM = "(name, 'R') or (name, 'I')"
+    # a malformed value, and fragments of its error message, with {} for the
+    # name of the argument
+    MALFORMED = [
+        (['C9_bsmumu', 'C9_bdmumu'],
+         ["{}[0] is 'C9_bsmumu',", "('C9_bsmumu', 'R') for its real part"]),
+        ('C9_bsmumu',
+         ["{} is the string 'C9_bsmumu',", "[('C9_bsmumu', 'R')]"]),
+        (('C9_bsmumu', 'R'),
+         ["{}[0] is 'C9_bsmumu',", "write [('C9_bsmumu', 'R')]"]),
+        ([('C9_bsmumu', 'R'), ('C9_bdmumu', 'r')],
+         ["{}[1] is ('C9_bdmumu', 'r'),"]),
+        (9,
+         ["{} is 9,", "a list or a tuple"]),
+        # a set's order, which would be the order of the result, varies
+        # between runs
+        ({('C9_bsmumu', 'R')},
+         ["{} is {{('C9_bsmumu', 'R')}},", "a list or a tuple"]),
+        ({('C9_bsmumu', 'R'): 1.0}.keys(),
+         ["{} is dict_keys([('C9_bsmumu', 'R')]),", "a list or a tuple"]),
+    ]
+
+    def setUp(self):
+        from functools import lru_cache
+        from unittest import mock
+        from rgevolve.tools import functions
+        self.run_and_match = functions.run_and_match
+        # hashes its arguments, as the cache of _run_and_match_impl does
+        stub = lru_cache(maxsize=None)(lambda *args: args)
+        patcher = mock.patch.object(functions, '_run_and_match_impl', stub)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_issue_call(self):
+        for sector_out in self.SECTORS:
+            with self.subTest(sector_out=sector_out):
+                with self.assertRaises(ValueError) as cm:
+                    self.run_and_match(
+                        eft_in='SMEFT', basis_in='Warsaw',
+                        eft_out='WET', basis_out='flavio',
+                        scale_in=1000.0, scale_out=4.2,
+                        sector_out=sector_out,
+                        wcs_out=['C9_bsmumu', 'C9_bdmumu'],
+                        wcs_in=['lq1_2223', 'lq1_2213'],
+                    )
+                message = str(cm.exception)
+                self.assertIn("wcs_in[0] is 'lq1_2223',", message)
+                self.assertIn(self.FORM, message)
+
+    def test_malformed(self):
+        for argument in ('wcs_in', 'wcs_out'):
+            for value, fragments in self.MALFORMED:
+                for sector_out in self.SECTORS:
+                    with self.subTest(
+                        argument=argument, value=value, sector_out=sector_out,
+                    ):
+                        wcs = dict(self.GOOD, **{argument: value})
+                        with self.assertRaises(ValueError) as cm:
+                            self.run_and_match(*self.ARGS, sector_out, **wcs)
+                        message = str(cm.exception)
+                        for fragment in fragments + [self.FORM]:
+                            self.assertIn(fragment.format(argument), message)
+
+    def test_lists_and_tuples(self):
+        # Either list, and each pair, may be a list or a tuple; pairs are lists
+        # when read from JSON, for example. The stub gets tuples of tuples,
+        # which it can hash
+        expected = (tuple(self.GOOD['wcs_in']), tuple(self.GOOD['wcs_out']))
+        for outer in (list, tuple):
+            for pair in (tuple, list):
+                wcs = {a: outer(pair(wc) for wc in v) for a, v in self.GOOD.items()}
+                for sector_out in self.SECTORS:
+                    with self.subTest(sector_out=sector_out, wcs=wcs):
+                        args = self.run_and_match(*self.ARGS, sector_out, **wcs)
+                        self.assertEqual(args[-2:], expected)

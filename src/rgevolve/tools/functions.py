@@ -307,6 +307,60 @@ def _run_and_match_impl(
     return M
 
 
+_WC_FORM = "(name, 'R') or (name, 'I'), as returned by get_wc_basis"
+
+
+def _is_wc_pair(wc) -> bool:
+    """True for a pair ``(name, 'R' | 'I')``, given as a tuple or a list."""
+    return (
+        isinstance(wc, (tuple, list)) and len(wc) == 2
+        and isinstance(wc[0], str)
+        and isinstance(wc[1], str) and wc[1] in ('R', 'I')
+    )
+
+
+def _canonical_wcs(wcs, argument: str) -> Optional[Tuple[Tuple[str, str], ...]]:
+    """Return ``wcs`` as a tuple of ``(name, 'R' | 'I')`` tuples, or None.
+
+    ``wcs`` is a list or a tuple of such pairs, and each pair is a tuple
+    or a list. Loads no data, so ``run_and_match`` calls it before any
+    lookup (rgevolve/rgevolve-core#1).
+
+    Raises ValueError, naming ``argument``, if ``wcs`` is not a list or a
+    tuple, or at its first entry that is not such a pair.
+    """
+    if wcs is None:
+        return None
+    if isinstance(wcs, str):
+        raise ValueError(
+            f"{argument} is the string {wcs!r}, but it must be a list of "
+            f"pairs {_WC_FORM}, e.g. [({wcs!r}, 'R')]"
+        )
+    if not isinstance(wcs, (list, tuple)):
+        raise ValueError(
+            f"{argument} is {wcs!r}, but it must be a list or a tuple of "
+            f"pairs {_WC_FORM}"
+        )
+    canonical = []
+    for position, wc in enumerate(wcs):
+        if not _is_wc_pair(wc):
+            if _is_wc_pair(wcs):
+                hint = (
+                    f"; to pass the single pair {tuple(wcs)!r}, "
+                    f"write [{tuple(wcs)!r}]"
+                )
+            elif isinstance(wc, str):
+                hint = f", e.g. ({wc!r}, 'R') for its real part"
+            else:
+                hint = ""
+            raise ValueError(
+                f"{argument}[{position}] is {wc!r}, but each entry of "
+                f"{argument} must be a pair {_WC_FORM}{hint}"
+            )
+        canonical.append((wc[0], wc[1]))
+    return tuple(canonical)
+
+
 def run_and_match(
     eft_in: str,
     eft_out: str,
@@ -338,21 +392,28 @@ def run_and_match(
       entries connecting WCs that don't lie in matched sectors are
       exactly ``0``.
 
-    ``wcs_in`` / ``wcs_out`` may be lists or tuples; results are cached
-    per unique (canonicalised-tuple) call.
+    Each entry of ``wcs_in`` / ``wcs_out`` is a pair ``(name, 'R')`` or
+    ``(name, 'I')``, for the real or the imaginary part of a Wilson
+    coefficient, as ``get_wc_basis`` returns them: for example
+    ``[('C9_bsmumu', 'R'), ('C9_bsmumu', 'I')]``. Either list must be a
+    list or a tuple, and its order is the order of the result's columns
+    (``wcs_in``) or rows (``wcs_out``). Each pair may be a tuple or a
+    list. Their form is checked before any data is loaded. Results are
+    cached per unique call, with both lists turned into tuples of tuples.
 
-    Raises ``ValueError`` on duplicate WCs, WCs outside the allowed
-    set, or invalid argument combinations.
+    Raises ``ValueError`` if ``wcs_in`` or ``wcs_out`` is not a list or a
+    tuple of such pairs, on duplicate WCs, WCs outside the allowed set, or
+    invalid argument combinations.
 
     Note (future): future bases may map one ``sector_out`` to multiple
     input sectors. This release supports a single input sector per
     ``sector_out``.
     """
+    wcs_in = _canonical_wcs(wcs_in, 'wcs_in')
+    wcs_out = _canonical_wcs(wcs_out, 'wcs_out')
     return _run_and_match_impl(
         eft_in, eft_out, basis_in, basis_out, scale_in, scale_out,
-        sector_out,
-        tuple(wcs_in) if wcs_in is not None else None,
-        tuple(wcs_out) if wcs_out is not None else None,
+        sector_out, wcs_in, wcs_out,
     )
 
 
