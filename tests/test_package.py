@@ -430,3 +430,138 @@ class TestGetTranslatorBranches(unittest.TestCase):
                     T = get_translator('WET', basis_in, basis_out, 's')
                     self.assertIsInstance(T, np.ndarray)
                     self.assertTrue(np.allclose(T, expected))
+
+
+class TestInterpolateFromRef(unittest.TestCase):
+    """peterstangl/rgevolve#1 on a synthetic grid held in memory, so this
+    needs no companion package. Off the grid, interpolate_from_ref weights
+    the tabulated matrices, or with inverse=True their tabulated inverses,
+    with t = log(mu/mu_lo) / log(mu_hi/mu_lo). A scale on the grid up to
+    float rounding gets the tabulated matrix."""
+
+    EFT = 'WET-3'  # its reference scale, 1.3 GeV, is on the grid below
+
+    def setUp(self):
+        from unittest import mock
+        from rgevolve.tools import functions
+        self.functions = functions
+        self.assertEqual(functions.reference_scale[self.EFT], 1.3)
+        self.scales = np.array([1.0, 1.3, 2.0, 5.0])
+        rng = np.random.default_rng(0)
+        b, c = 0.2 * rng.standard_normal((2, 3, 3))
+        # U(1.3 GeV -> mu), the identity at 1.3 GeV
+        self.regular = np.array([
+            np.eye(3) + b * x + c * x**2 for x in np.log(self.scales / 1.3)
+        ])
+        self.inverse = np.linalg.inv(self.regular)
+        tabulated = {False: self.regular, True: self.inverse}
+        for name, new in (
+            ('get_scales', lambda eft, basis: self.scales),
+            ('get_evolution_matrix',
+             lambda eft, basis, sector, scale_id, inverse=False:
+                 tabulated[inverse][scale_id]),
+            ('interpolate_from_ref', functions.interpolate_from_ref.__wrapped__),  # no cache
+        ):
+            patcher = mock.patch.object(functions, name, new)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def interpolate(self, scale, inverse=False):
+        return self.functions.interpolate_from_ref(
+            self.EFT, 'B', scale, 's', inverse=inverse,
+        )
+
+    def test_weight_in_both_branches(self):
+        for mu in (1.1, 1.6, 3.0):
+            with self.subTest(mu=mu):
+                hi = np.searchsorted(self.scales, mu)
+                lo = hi - 1
+                t = np.log(mu / self.scales[lo]) / np.log(self.scales[hi] / self.scales[lo])
+                for inverse, tabulated in ((False, self.regular), (True, self.inverse)):
+                    expected = tabulated[lo] + t * (tabulated[hi] - tabulated[lo])
+                    self.assertTrue(np.allclose(
+                        self.interpolate(mu, inverse=inverse), expected,
+                        rtol=1e-12, atol=1e-14,
+                    ))
+
+    def test_grid_point_up_to_rounding(self):
+        for i, s in enumerate(self.scales):
+            for scale in (np.nextafter(s, 0), s, np.nextafter(s, np.inf)):
+                for inverse, tabulated in ((False, self.regular), (True, self.inverse)):
+                    with self.subTest(scale=float(scale), inverse=inverse):
+                        M = self.interpolate(float(scale), inverse=inverse)
+                        self.assertTrue(np.array_equal(M, tabulated[i]))
+        with self.assertRaises(ValueError):
+            self.interpolate(float(self.scales[0] * (1 - 1e-6)))
+
+
+def _has_wet3_flavio():
+    """True if the companion package rgevolve.wet_3.flavio is installed."""
+    try:
+        from rgevolve.tools import bases_installed
+    except ImportError:
+        return False
+    return 'flavio' in bases_installed.get('WET-3', [])
+
+
+# CVLL_sddd in the WET-3, flavio basis, run from mu to 1.3 GeV by wilson with
+# qcd_order=1, qed_order=1: the table in peterstangl/rgevolve#1. wilson 2.5.2
+# reproduces it to the five digits given there.
+_WILSON_CVLL_SDDD_TO_1P3 = {
+    1.31: 0.99866, 1.40: 0.98746, 1.53: 0.97362,
+    1.70: 0.95859, 1.90: 0.94412, 2.00: 0.93787,
+}
+
+
+@unittest.skipUnless(
+    _has_wet3_flavio(), "Requires the companion package rgevolve.wet_3.flavio",
+)
+class TestOffGridRun(unittest.TestCase):
+    """peterstangl/rgevolve#1 on the data of the sector 'sd' of the WET-3,
+    flavio basis, whose grid points next to the reference scale 1.3 GeV are
+    1.15 and 2.0 GeV. Off the grid, the run to the reference scale weighted
+    the tabulated inverses with 1/t: from 1.31 GeV, CVLL_sddd came back as
+    -2.49."""
+
+    OFF_GRID = (1.31, 1.40, 1.53, 1.70)
+
+    def setUp(self):
+        from rgevolve.tools import reference_scale
+        self.assertEqual(reference_scale['WET-3'], 1.3)
+
+    def run_wet3(self, scale_in, scale_out, wcs=None):
+        from rgevolve.tools import run_and_match
+        return run_and_match(
+            'WET-3', 'WET-3', 'flavio', 'flavio', scale_in, scale_out,
+            sector_out='sd', wcs_in=wcs, wcs_out=wcs,
+        )
+
+    def test_round_trip_cvll_sddd(self):
+        # the issue's reproduction. A single element leaves out the mixing
+        # with the rest of the sector, so the product is 1 only approximately
+        wcs = [('CVLL_sddd', 'R')]
+        for mu in self.OFF_GRID:
+            with self.subTest(mu=mu):
+                down = self.run_wet3(mu, 1.3, wcs)[0, 0]
+                up = self.run_wet3(1.3, mu, wcs)[0, 0]
+                self.assertAlmostEqual(down * up, 1, delta=5e-3)
+
+    def test_round_trip_sector(self):
+        # off the grid, the interpolated inverse is not exactly the inverse of
+        # the interpolated matrix, so a round trip is the identity only up to
+        # about the interpolation error: at most 2.3e-2 on the diagonal here.
+        # Off the diagonal it is larger where the entries are large, e.g. 0.6
+        # for C7_sd <- CTRR_sdss
+        pairs = [(mu, 1.3) for mu in self.OFF_GRID]
+        pairs += [(1.40, 1.70), (1.10, 1.70), (0.90, 1.20)]
+        for a, b in pairs:
+            with self.subTest(a=a, b=b):
+                product = self.run_wet3(a, b) @ self.run_wet3(b, a)
+                self.assertLess(np.abs(np.diag(product) - 1).max(), 5e-2)
+
+    def test_agrees_with_wilson(self):
+        wcs = [('CVLL_sddd', 'R')]
+        for mu, expected in _WILSON_CVLL_SDDD_TO_1P3.items():
+            with self.subTest(mu=mu):
+                value = self.run_wet3(mu, 1.3, wcs)[0, 0]
+                self.assertLess(abs(value / expected - 1), 5e-3)

@@ -82,8 +82,10 @@ def interpolate_from_ref(eft, basis, scale, sector, inverse=False):
     scales = get_scales(eft, basis)
     if list(scales) != sorted(scales):  # scales assumed sorted in ascending order
         raise ValueError(f'RG scales for EFT {eft} are not ordered in ascending order')
-    if scale in scales:
-        return get_evolution_matrix(eft, basis, sector, np.where(scales==scale)[0][0], inverse=inverse)
+    # a scale on the grid up to float rounding gets the tabulated matrix
+    on_grid = np.flatnonzero(np.isclose(scales, scale, rtol=1e-9, atol=0))
+    if on_grid.size:
+        return get_evolution_matrix(eft, basis, sector, int(on_grid[0]), inverse=inverse)
     elif scale < min(scales) or scale > max(scales):
         raise ValueError(f'Scale {scale} outside of available range {min(scales)}-{max(scales)}')
     else:
@@ -92,10 +94,11 @@ def interpolate_from_ref(eft, basis, scale, sector, inverse=False):
         scale_high = scales[scale_idx]
         mat_low = get_evolution_matrix(eft, basis, sector, scale_idx-1, inverse=inverse)
         mat_high = get_evolution_matrix(eft, basis, sector, scale_idx, inverse=inverse)
-        if inverse:
-            scale_factor = np.log(scale_high/scale_low) / np.log(scale/scale_low)
-        else:
-            scale_factor = np.log(scale/scale_low) / np.log(scale_high/scale_low)
+        # the same weight for the tabulated matrices and for their tabulated
+        # inverses. Off the grid, the interpolated inverse is therefore not
+        # exactly the inverse of the interpolated matrix; they differ by
+        # about the interpolation error
+        scale_factor = np.log(scale/scale_low) / np.log(scale_high/scale_low)
         return mat_low + (mat_high - mat_low) * scale_factor
 
 @lru_cache(maxsize=None)
