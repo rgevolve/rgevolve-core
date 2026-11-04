@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 import unittest
 
 import numpy as np
@@ -12,6 +15,25 @@ class TestPackage(unittest.TestCase):
             self.fail("Importing rgevolve.tools failed.")
         else:
             self.assertIsNotNone(tools)
+
+    def test_import_in_fresh_interpreter(self):
+        # pytest imports importlib.resources before any test runs, so an
+        # import in this process cannot see a module that uses a submodule
+        # it does not import (rgevolve/rgevolve-core#2). A fresh interpreter
+        # can. It inherits the environment and the working directory, so
+        # PYTHONPATH=src still tests the checkout.
+        result = subprocess.run(
+            [sys.executable, '-c',
+             'import rgevolve.tools; print(rgevolve.tools.__file__)'],
+            capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        import rgevolve.tools
+        self.assertEqual(
+            os.path.realpath(result.stdout.strip().rsplit('\n', 1)[-1]),
+            os.path.realpath(rgevolve.tools.__file__),
+            msg='The fresh interpreter imported another rgevolve.tools.',
+        )
 
     def test_invalid_eft_direction_wet_to_smeft(self):
         # WET cannot run-and-match to SMEFT (matching only goes downward).
