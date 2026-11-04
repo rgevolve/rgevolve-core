@@ -1,4 +1,5 @@
 import importlib
+import importlib.resources
 import appdirs
 import os
 import h5py
@@ -19,11 +20,7 @@ def hash_h5_dataset(dset):
 
 def get_data_path(package_name):
     """Return the path to the data file."""
-    try:
-        return importlib.resources.files(package_name).joinpath('data.h5')
-    except AttributeError:
-        import pkg_resources
-        return pkg_resources.resource_filename(package_name, "data.h5")
+    return importlib.resources.files(package_name).joinpath('data.h5')
 
 def get_cache_path(package_name):
     """Return the path to the cache file."""
